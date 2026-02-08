@@ -16,31 +16,63 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - name: Set up JDK 17
-      uses: actions/setup-java@v5
-      with:
-        distribution: temurin
-        java-version: 17
+      - name: Checkout code
+        uses: actions/checkout@v4   # updated to latest stable major version
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
 
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v5
-      with:
-        cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
 
-    - name: Run Gradle
-      run: ./gradlew assemblePrerelease build androidSourcesJar makeJar
+      - name: Fetch keystore from a public location
+        id: fetch_keystore
+        run: |
+          mkdir -p "${RUNNER_TEMP}/keystore"
+          
+          # IMPORTANT: Change these URLs to point to YOUR OWN public location!
+          # For your personal fork, you have two main options:
+          # 1. Upload keystore.jks + keystore_password.txt to a public GitHub repo or Gist you control
+          # 2. Use GitHub Releases / artifacts from another workflow
+          # 3. Or skip signing → change to assembleDebug instead (unsigned APK)
+          
+          curl -L -H "Authorization: token ${{ github.token }}" \
+            -o "${RUNNER_TEMP}/keystore/prerelease_keystore.keystore" \
+            "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_PUBLIC_SECRETS_REPO/main/keystore.jks"
+          
+          curl -L -H "Authorization: token ${{ github.token }}" \
+            -o "keystore_password.txt" \
+            "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_PUBLIC_SECRETS_REPO/main/keystore_password.txt"
+          
+          KEY_PWD=$(cat keystore_password.txt)
+          echo "::add-mask::$KEY_PWD"
+          echo "key_pwd=$KEY_PWD" >> $GITHUB_OUTPUT
 
-    - name: Create pre-release
-      uses: marvinpinto/action-automatic-releases@latest
-      with:
-        repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "pre-release"
-        prerelease: true
-        title: "Pre-release Build"
-        files: |
-          app/build/outputs/apk/prerelease/release/*.apk
-          app/build/libs/app-sources.jar
-          app/build/classes.jar
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4   # updated
+
+      - name: Build with Gradle
+        run: ./gradlew assemblePrerelease build androidSourcesJar makeJar
+        env:
+          SIGNING_KEY_ALIAS: "key0"
+          SIGNING_KEY_PASSWORD: ${{ steps.fetch_keystore.outputs.key_pwd }}
+          SIGNING_STORE_PASSWORD: ${{ steps.fetch_keystore.outputs.key_pwd }}
+          # Add your own secrets if needed (set them in repo Settings → Secrets and variables → Actions)
+          # SIMKL_CLIENT_ID:     ${{ secrets.SIMKL_CLIENT_ID }}
+          # SIMKL_CLIENT_SECRET: ${{ secrets.SIMKL_CLIENT_SECRET }}
+          # MDL_API_KEY:         ${{ secrets.MDL_API_KEY }}
+
+      - name: Create pre-release
+        uses: marvinpinto/action-automatic-releases@latest
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"   # default token is enough here
+          automatic_release_tag: "pre-release"
+          prerelease: true
+          title: "Pre-release Build"
+          files: |
+            app/build/outputs/apk/prerelease/release/*.apk
+            app/build/libs/app-sources.jar
+            app/build/classes.jar
